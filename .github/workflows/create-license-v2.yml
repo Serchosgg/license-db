@@ -1,0 +1,115 @@
+# ============================================================
+# create-license-v2.yml
+# 
+# Versión alternativa que NO hace commit directamente.
+# En su lugar, usa GitHub API para actualizar el archivo.
+# Esto evita el error 128.
+# ============================================================
+
+name: Create License v2
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: 'Customer email'
+        required: true
+        type: string
+      masterKey:
+        description: 'Generated master key'
+        required: true
+        type: string
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Update licenses.json via API
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EMAIL: ${{ inputs.email }}
+          MASTER_KEY: ${{ inputs.masterKey }}
+        run: |
+          python3 << 'PYTHON_SCRIPT'
+          import json
+          import os
+          import base64
+          from datetime import datetime, timezone
+          import urllib.request
+          import urllib.error
+
+          # Variables
+          token = os.environ.get("GITHUB_TOKEN")
+          email = os.environ.get("EMAIL", "").strip().lower()
+          master_key = os.environ.get("MASTER_KEY", "").strip()
+          repo = "Serchosgg/license-db"
+          file_path = "licenses.json"
+          
+          # Headers
+          headers = {
+              "Authorization": f"token {token}",
+              "Accept": "application/vnd.github.v3+json",
+              "User-Agent": "GitHub-Actions"
+          }
+          
+          # Obtener archivo actual
+          url = f"https://api.github.com/repos/{repo}/contents/{file_path}"
+          req = urllib.request.Request(url, headers=headers)
+          
+          try:
+              with urllib.request.urlopen(req) as response:
+                  data = json.loads(response.read().decode())
+                  content = base64.b64decode(data["content"]).decode()
+                  sha = data["sha"]
+                  db = json.loads(content)
+          except:
+              # Si el archivo no existe, crear uno nuevo
+              db = {"licenses": []}
+              sha = None
+          
+          # Verificar si ya existe
+          existing = next((lic for lic in db["licenses"] if lic["email"] == email), None)
+          
+          if existing:
+              print(f"License for {email} already exists")
+              exit(0)
+          
+          # Crear nueva licencia
+          new_license = {
+              "email": email,
+              "masterKey": master_key,
+              "createdAt": datetime.now(timezone.utc).isoformat(),
+              "isActive": True,
+              "activations": []
+          }
+          
+          db["licenses"].append(new_license)
+          
+          # Actualizar archivo via API
+          new_content = json.dumps(db, indent=2)
+          encoded_content = base64.b64encode(new_content.encode()).decode()
+          
+          update_data = {
+              "message": f"Create license for {email}",
+              "content": encoded_content,
+              "branch": "main"
+          }
+          
+          if sha:
+              update_data["sha"] = sha
+          
+          req = urllib.request.Request(
+              url,
+              data=json.dumps(update_data).encode(),
+              headers=headers,
+              method="PUT"
+          )
+          
+          try:
+              with urllib.request.urlopen(req) as response:
+                  print(f"✅ License created for {email}")
+          except urllib.error.HTTPError as e:
+              print(f"❌ Error: {e.code} - {e.read().decode()}")
+              exit(1)
+          PYTHON_SCRIPT
