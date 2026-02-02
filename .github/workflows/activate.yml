@@ -1,0 +1,85 @@
+# ============================================================
+# activate.yml
+# 
+# Este workflow ES el servidor de licencias.
+# Se activa cuando el cliente hace una llamada al GitHub API:
+#   POST /repos/{owner}/{repo}/actions/workflows/activate.yml/dispatches
+#
+# El cliente envía: email, masterKey, machineId, machineName
+# Este workflow:
+#   1. Lee licenses.json del repo
+#   2. Valida la master key (mismo algoritmo hash que el cliente usa)
+#   3. Verifica que no haya otra activación activa
+#   4. Si todo pasa → agrega la activación y hace commit a licenses.json
+#   5. Escribe el resultado en result.json (el cliente lo lee después)
+#
+# SEGURIDAD:
+# - El PAT (token de GitHub) nunca sale del repo ni del cliente
+# - El cliente solo necesita un token con permiso "actions: write" 
+#   en este repo — no puede tocar licenses.json directamente
+# - La validación de master key se hace aquí, no en el cliente
+# ============================================================
+
+name: Activate License
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: 'Customer email'
+        required: true
+        type: string
+      masterKey:
+        description: 'Master key (XXXX-XXXX-XXXX-XXXX)'
+        required: true
+        type: string
+      machineId:
+        description: 'Machine ID (SHA-256 hash)'
+        required: true
+        type: string
+      machineName:
+        description: 'Machine name'
+        required: true
+        type: string
+      requestId:
+        description: 'Unique request ID (para que el cliente sepa a qué resultado leer)'
+        required: true
+        type: string
+
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Este script hace toda la lógica de validación y activación
+      - name: Run activation logic
+        env:
+          INPUT_EMAIL: ${{ github.event.inputs.email }}
+          INPUT_MASTERKEY: ${{ github.event.inputs.masterKey }}
+          INPUT_MACHINEID: ${{ github.event.inputs.machineId }}
+          INPUT_MACHINENAME: ${{ github.event.inputs.machineName }}
+          INPUT_REQUESTID: ${{ github.event.inputs.requestId }}
+          # Esta clave secreta la defines en GitHub → repo → Settings → Secrets
+          # Debe ser EXACTAMENTE la misma que está hardcodeada en el cliente C#
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          # Máximo activaciones por licencia (configurable)
+          MAX_ACTIVATIONS: ${{ secrets.MAX_ACTIVATIONS || '1' }}
+        run: python3 activate.py
+
+      # Hacer commit de los cambios (licenses.json y result.json)
+      - name: Commit changes
+        run: |
+          git config --global user.email "license-bot@github-actions"
+          git config --global user.name "License Bot"
+          git add licenses.json results/
+          git diff --cached --quiet || git commit -m "License activation - ${{ github.event.inputs.requestId }}"
+          git push
