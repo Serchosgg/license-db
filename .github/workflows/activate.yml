@@ -58,6 +58,11 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
+
+# IMPORTANTE: Dar permisos de escritura
+permissions:
+  contents: write
+
           python-version: '3.11'
 
       # Este script hace toda la lógica de validación y activación
