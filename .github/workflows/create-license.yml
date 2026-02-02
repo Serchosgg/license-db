@@ -1,0 +1,86 @@
+# ============================================================
+# create-license.yml
+# 
+# Este workflow PRE-REGISTRA una licencia en licenses.json.
+# Lo llama el generador de licencias cuando creas una nueva clave.
+#
+# El flujo completo es:
+# 1. Generador llama este workflow → se crea la licencia en licenses.json
+# 2. Cliente activa con activate.yml → se vincula al hardware
+# 3. Panel admin lee licenses.json → muestra todo
+# ============================================================
+
+name: Create License
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: 'Customer email'
+        required: true
+        type: string
+      masterKey:
+        description: 'Generated master key'
+        required: true
+        type: string
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      
+      - name: Create license entry
+        env:
+          EMAIL: ${{ inputs.email }}
+          MASTER_KEY: ${{ inputs.masterKey }}
+        run: |
+          python3 << 'PYTHON_SCRIPT'
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          email = os.environ.get("EMAIL", "").strip().lower()
+          master_key = os.environ.get("MASTER_KEY", "").strip()
+
+          # Leer licenses.json actual
+          try:
+              with open("licenses.json", "r") as f:
+                  db = json.load(f)
+          except FileNotFoundError:
+              db = {"licenses": []}
+
+          # Verificar si ya existe
+          existing = next((lic for lic in db["licenses"] if lic["email"] == email), None)
+          
+          if existing:
+              print(f"License for {email} already exists")
+              exit(0)
+
+          # Crear nueva entrada
+          new_license = {
+              "email": email,
+              "masterKey": master_key,
+              "createdAt": datetime.now(timezone.utc).isoformat(),
+              "isActive": True,
+              "activations": []
+          }
+
+          db["licenses"].append(new_license)
+
+          # Guardar
+          with open("licenses.json", "w") as f:
+              json.dump(db, f, indent=2)
+
+          print(f"✅ License created for {email}")
+          PYTHON_SCRIPT
+
+      - name: Commit changes
+        run: |
+          git config user.name "License Generator"
+          git config user.email "license-bot@github.com"
+          git add licenses.json
+          git diff --staged --quiet || git commit -m "Create license for ${{ inputs.email }}"
+          git push
